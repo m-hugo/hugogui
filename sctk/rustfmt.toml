@@ -1,0 +1,6 @@
+max_width = 150
+hard_tabs=true
+use_small_heuristics = "Max"
+use_field_init_shorthand = true
+newline_style = "Unix"
+edition = "2018"
