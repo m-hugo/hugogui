@@ -1,36 +1,29 @@
 #![allow(unused_must_use)]
 
-use std::process::Command;
 use smithay_client_toolkit::shell::xdg::window;
+use std::process::Command;
 
-use smithay_client_toolkit::{
-	shell::layer::{Anchor, LayerHandler, LayerState, LayerSurface, LayerSurfaceConfigure, LayerSurfaceBuilder},
-};
+use smithay_client_toolkit::shell::layer::{Anchor, LayerHandler, LayerState, LayerSurface, LayerSurfaceBuilder, LayerSurfaceConfigure};
 
 mod hugo_client_toolkit;
-use crate::hugo_client_toolkit::{Motion, Hlib, Layer};
+use crate::hugo_client_toolkit::{Hlib, Layer, Motion};
 
 fn main() {
 	env_logger::init();
 
-	let mut simple_layer = HClient {
-		width: 256,
-		height: 256,
-		needs_drawing: true,
-	};
+	let mut simple_layer = HClient { width: 256, height: 256, needs_drawing: true };
 
 	Hlib::run(simple_layer);
 }
 
-
 impl Layer for HClient {
 	fn layer(&mut self) -> LayerSurfaceBuilder {
 		LayerSurface::builder()
-		.size((0, 20))
-		.margin(0, 20, 0, 20)
-		.anchor(Anchor::RIGHT | Anchor::LEFT | Anchor::BOTTOM)
-		.namespace("bottom edge gestures")
-		.exclusive_zone(-1)
+			.size((0, 20))
+			.margin(0, 20, 0, 20)
+			.anchor(Anchor::RIGHT | Anchor::LEFT | Anchor::BOTTOM)
+			.namespace("bottom edge gestures")
+			.exclusive_zone(-1)
 	}
 	fn change_size(&mut self, proposed_size: (u32, u32)) {
 		if proposed_size.0 == 0 || proposed_size.1 == 0 {
@@ -44,7 +37,7 @@ impl Layer for HClient {
 }
 
 impl Motion for HClient {
-	fn motion(&self, startpoint: &mut Option<(f64,f64)>, position: (f64,f64)){
+	fn motion(&self, startpoint: &mut Option<(f64, f64)>, position: (f64, f64)) {
 		if let Some(sp) = startpoint {
 			let dify = position.1 - sp.1;
 			let difx = position.0 - sp.0;

@@ -4,9 +4,7 @@ use rusttype::{point, Font, Scale};
 
 use std::collections::VecDeque;
 
-use lib_poki_launcher::{
-	App, AppsDB, Config, CFG_PATH, DB_PATH,
-};
+use lib_poki_launcher::{App, AppsDB, Config, CFG_PATH, DB_PATH};
 
 use once_cell::sync::OnceCell;
 use std::sync::Mutex;

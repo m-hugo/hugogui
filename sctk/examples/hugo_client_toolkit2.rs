@@ -1,4 +1,5 @@
 #![allow(unused_imports)]
+#![allow(dead_code)]
 use smithay_client_toolkit::{
 	compositor::{CompositorHandler, CompositorState},
 	delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer, delegate_registry, delegate_seat, delegate_shm,
@@ -24,7 +25,31 @@ use wayland_client::{
 	Connection, ConnectionHandle, Dispatch, QueueHandle,
 };
 
-use crate::HClient;
+pub trait HClient {
+	fn width(&self) -> u32;
+	fn height(&self) -> u32;
+	fn draw(&mut self, buffer: &mut [u8], surface: &wl_surface::WlSurface, conn: &mut ConnectionHandle<'_>);
+	fn needs_drawing(&self) -> bool;
+	fn set_needs_drawing(&mut self, nd: bool);
+	#[cfg(feature = "Window")]
+	fn window(&self) -> window::WindowBuilder;
+	#[cfg(feature = "Window")]
+	fn change_size(&mut self, proposed_size: Option<(u32, u32)>);
+	#[cfg(feature = "Clickable")]
+	fn short_click(&mut self, position: (usize, usize));
+	#[cfg(feature = "Clickable")]
+	fn long_click(&mut self, position: (usize, usize));
+	#[cfg(feature = "Keyboard")]
+	fn press(&mut self, key: &str);
+	#[cfg(feature = "Scrollable")]
+	fn scroll(&mut self, amount: f64);
+	#[cfg(feature = "Motion")]
+	fn motion(&self, startpoint: &mut Option<(f64, f64)>, position: (f64, f64));
+	#[cfg(feature = "Layer")]
+	fn layer(&mut self) -> LayerSurfaceBuilder;
+	#[cfg(feature = "Layer")]
+	fn change_size(&mut self, proposed_size: (u32, u32));
+}
 
 pub struct Hlib {
 	seat_state: SeatState,
@@ -58,12 +83,12 @@ pub struct Hlib {
 	#[cfg(feature = "Layer")]
 	layer_state: LayerState,
 
-	hclient: HClient,
+	hclient: Box<dyn HClient>,
 }
 
 impl Hlib {
 	#[cfg(feature = "Window")]
-	pub fn run(hclient: HClient) {
+	pub fn run(hclient: impl HClient + 'static) {
 		let conn = Connection::connect_to_env().unwrap();
 		let display = conn.handle().display();
 		let mut event_queue = conn.new_event_queue();
@@ -92,7 +117,7 @@ impl Hlib {
 			pool: None,
 			buffer: None,
 			window: None,
-			hclient,
+			hclient: Box::new(hclient),
 		};
 
 		event_queue.blocking_dispatch(&mut hlib).unwrap();
@@ -100,7 +125,7 @@ impl Hlib {
 
 		let pool = hlib
 			.shm_state
-			.new_raw_pool(hlib.hclient.width as usize * hlib.hclient.height as usize * 4, &mut conn.handle(), &qh, ())
+			.new_raw_pool(hlib.hclient.width() as usize * hlib.hclient.height() as usize * 4, &mut conn.handle(), &qh, ())
 			.expect("Failed to create pool");
 		hlib.pool = Some(pool);
 
@@ -121,7 +146,7 @@ impl Hlib {
 		}
 	}
 	#[cfg(feature = "Layer")]
-	pub fn run(hclient: HClient) {
+	pub fn run(hclient: impl HClient) {
 		let conn = Connection::connect_to_env().unwrap();
 		let display = conn.handle().display();
 		let mut event_queue = conn.new_event_queue();
@@ -149,7 +174,7 @@ impl Hlib {
 			first_configure: true,
 			pool: None,
 			buffer: None,
-			hclient,
+			hclient: Box::new(hclient),
 		};
 
 		event_queue.blocking_dispatch(&mut hlib).unwrap();
@@ -157,7 +182,7 @@ impl Hlib {
 
 		let pool = hlib
 			.shm_state
-			.new_raw_pool(hlib.hclient.width as usize * hlib.hclient.height as usize * 4, &mut conn.handle(), &qh, ())
+			.new_raw_pool(hlib.hclient.width() as usize * hlib.hclient.height() as usize * 4, &mut conn.handle(), &qh, ())
 			.expect("Failed to create pool");
 		hlib.pool = Some(pool);
 
@@ -179,10 +204,10 @@ impl Hlib {
 	}
 	fn libdraw(&mut self, conn: &mut ConnectionHandle, qh: &QueueHandle<Hlib>) {
 		if let Some(window) = self.window.as_ref() {
-			if self.hclient.needs_drawing {
-				self.hclient.needs_drawing = false;
+			if self.hclient.needs_drawing() {
+				self.hclient.set_needs_drawing(false);
 				// Ensure the pool is big enough to hold the new buffer.
-				self.pool.as_mut().unwrap().resize((self.hclient.width * self.hclient.height * 4) as usize, conn).expect("resize pool");
+				self.pool.as_mut().unwrap().resize((self.hclient.width() * self.hclient.height() * 4) as usize, conn).expect("resize pool");
 
 				// Destroy the old buffer.
 				// FIXME: Integrate this into the pool logic.
@@ -191,15 +216,15 @@ impl Hlib {
 				}
 
 				let offset = 0;
-				let stride = self.hclient.width as i32 * 4;
+				let stride = self.hclient.width() as i32 * 4;
 				let pool = self.pool.as_mut().unwrap();
 
 				let wl_buffer = pool
-					.create_buffer(offset, self.hclient.width as i32, self.hclient.height as i32, stride, wl_shm::Format::Argb8888, (), conn, qh)
+					.create_buffer(offset, self.hclient.width() as i32, self.hclient.height() as i32, stride, wl_shm::Format::Argb8888, (), conn, qh)
 					.expect("create buffer");
 
 				// TODO: Upgrade to a better pool type
-				let len = self.hclient.height as usize * stride as usize; // length of a row
+				let len = self.hclient.height() as usize * stride as usize; // length of a row
 				let buffer = &mut pool.mmap()[offset as usize..][..len];
 
 				self.hclient.draw(buffer, window.wl_surface(), conn);
@@ -229,7 +254,7 @@ impl SeatHandler for Hlib {
 			self.keyboard = Some(keyboard);
 		}
 
-		#[cfg(all(feature = "Motion", feature = "Clickable"))]
+		#[cfg(any(feature = "Motion", feature = "Clickable"))]
 		if capability == Capability::Touch && self.touchscreen.is_none() {
 			println!("Set Touch capability");
 			let touchscreen = self.seat_state.get_touch(conn, qh, &seat).expect("Failed to create Touch");
@@ -313,6 +338,7 @@ impl WindowHandler for Hlib {
 		}
 	}
 }
+
 #[cfg(feature = "Layer")]
 impl LayerHandler for Hlib {
 	fn layer_state(&mut self) -> &mut LayerState {
@@ -345,45 +371,6 @@ impl ShmHandler for Hlib {
 		&mut self.shm_state
 	}
 }
-
-delegate_compositor!(Hlib);
-delegate_output!(Hlib);
-delegate_shm!(Hlib);
-
-#[cfg(feature = "Window")]
-delegate_xdg_shell!(Hlib);
-#[cfg(feature = "Window")]
-delegate_xdg_window!(Hlib);
-
-#[cfg(feature = "Layer")]
-delegate_layer!(Hlib);
-
-delegate_seat!(Hlib);
-
-#[cfg(feature = "Keyboard")]
-delegate_keyboard!(Hlib);
-
-#[cfg(feature = "Motion")]
-delegate_touch!(Hlib);
-
-#[cfg(feature = "Window")]
-delegate_registry!(Hlib: [
-	CompositorState,
-	OutputState,
-	ShmState,
-	SeatState,
-	XdgShellState<Self>,
-	XdgWindowState,
-]);
-
-#[cfg(feature = "Layer")]
-delegate_registry!(Hlib: [
-	CompositorState,
-	OutputState,
-	ShmState,
-	SeatState,
-	LayerState,
-]);
 
 impl ProvidesRegistryState for Hlib {
 	fn registry(&mut self) -> &mut RegistryState {
@@ -564,11 +551,9 @@ impl PointerHandler for Hlib {
 
 	fn pointer_axis(&mut self, _: &mut ConnectionHandle, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, _time: u32, scroll: PointerScroll) {
 		if self.pointer_focus {
-			if let Some(vertical) = scroll.axis(wl_pointer::Axis::VerticalScroll) {
-				if let AxisKind::Absolute(i) = vertical {
-					#[cfg(feature = "Scrollable")]
-					self.hclient.scroll(i);
-				}
+			if let Some(AxisKind::Absolute(i)) = scroll.axis(wl_pointer::Axis::VerticalScroll) {
+				#[cfg(feature = "Scrollable")]
+				self.hclient.scroll(i);
 			}
 
 			if let Some(horizontal) = scroll.axis(wl_pointer::Axis::HorizontalScroll) {
@@ -577,38 +562,45 @@ impl PointerHandler for Hlib {
 		}
 	}
 }
+
+delegate_compositor!(Hlib);
+delegate_output!(Hlib);
+delegate_shm!(Hlib);
+
+#[cfg(feature = "Window")]
+delegate_xdg_shell!(Hlib);
+#[cfg(feature = "Window")]
+delegate_xdg_window!(Hlib);
+
+#[cfg(feature = "Layer")]
+delegate_layer!(Hlib);
+
+delegate_seat!(Hlib);
+
+#[cfg(feature = "Keyboard")]
+delegate_keyboard!(Hlib);
+
+#[cfg(any(feature = "Motion", feature = "Clickable"))]
+delegate_touch!(Hlib);
+
 #[cfg(any(feature = "Clickable", feature = "Scrollable"))]
 delegate_pointer!(Hlib);
 
-#[cfg(feature = "Clickable")]
-pub trait Clickable: Sized {
-	fn short_click(&mut self, position: (usize, usize));
-	fn long_click(&mut self, position: (usize, usize));
-}
-
-#[cfg(feature = "Keyboard")]
-pub trait Keyboard: Sized {
-	fn press(&mut self, key: &str);
-}
-
-#[cfg(feature = "Scrollable")]
-pub trait Scrollable: Sized {
-	fn scroll(&mut self, amount: f64);
-}
-
-#[cfg(feature = "Motion")]
-pub trait Motion: Sized {
-	fn motion(&self, startpoint: &mut Option<(f64, f64)>, position: (f64, f64));
-}
-
 #[cfg(feature = "Window")]
-pub trait Window: Sized {
-	fn window(&mut self) -> window::WindowBuilder;
-	fn change_size(&mut self, _proposed_size: Option<(u32, u32)>);
-}
+delegate_registry!(Hlib: [
+	CompositorState,
+	OutputState,
+	ShmState,
+	SeatState,
+	XdgShellState<Self>,
+	XdgWindowState,
+]);
 
 #[cfg(feature = "Layer")]
-pub trait Layer: Sized {
-	fn layer(&mut self) -> LayerSurfaceBuilder;
-	fn change_size(&mut self, _proposed_size: (u32, u32));
-}
+delegate_registry!(Hlib: [
+	CompositorState,
+	OutputState,
+	ShmState,
+	SeatState,
+	LayerState,
+]);
